@@ -13,7 +13,7 @@ from keras.layers.advanced_activations import LeakyReLU
 # Most of the convolutional layers have this structure
 def irConv2D(inputs, dimension, size, name="", padding="same", stride=1):
     conv = Conv2D(dimension, size, name=name, use_bias=False, activation=None, padding=padding, strides=stride)(inputs)
-    batch = BatchNormalization(name=name + "/BatchNorm")(conv)
+    batch = BatchNormalization(name=name + "/BatchNorm", scale=False)(conv)
     relu = Activation("relu")(batch)
 
     return relu
@@ -120,7 +120,7 @@ def reduction_b(inputs, scope=""):
     tower_conv1_1 = irConv2D(tower_conv1, 256, 3, stride=2, padding="valid", name=scope + "/Branch_1/Conv2d_1a_3x3")
 
     #Branch_2
-    tower_conv2 = irConv2D(inputs, 256, 1, name = scope + "/Branch_2/Conv2d_0a_3x3")
+    tower_conv2 = irConv2D(inputs, 256, 1, name = scope + "/Branch_2/Conv2d_0a_1x1")
     tower_conv2_1 = irConv2D(tower_conv2, 256, 3, name=scope + "/Branch_2/Conv2d_0b_3x3")
     tower_conv2_2 = irConv2D(tower_conv2_1, 256, 3, stride=2, padding="valid", name=scope + "/Branch_2/Conv2d_1a_3x3")
 
@@ -177,7 +177,7 @@ def inception_resnet_v1(input_shape, scope="InceptionResnetV1", dropout_prob=0.8
 
     # Bottleneck layer
     btn = Dense(bottle_size, name=scope +"/Bottleneck")(drop)
-    btn_bn = BatchNormalization(name=scope + "/Bottleneck/BatchNorm")(btn)
+    btn_bn = BatchNormalization(name=scope + "/Bottleneck/BatchNorm", scale=False)(btn)
 
     return Model(inputs=incoming, outputs=btn_bn)
 
