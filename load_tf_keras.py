@@ -25,4 +25,4 @@ for lay in model.layers:
             moving_var = weights[lay.name + "/moving_variance:0"]
             lay.set_weights([beta, moving_mean, moving_var])
 
-model.save("InceptionResnetV1")
+model.save_weights("InceptionResnetV1_weights.h5")
