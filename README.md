@@ -5,12 +5,5 @@ Many thanks to the answers on this Stack Overflow's [question](https://stackover
 
 
 # How to Use
- - Go to the original repository
- - Get one of the pre-trained models in TF form
- - Run python3 extract\_tf\_weights.py \<path\_to\_model\> to generate weights\.pkl, the file containing the weights in numpy array form
- - Run python3 load\tf\_keras.py to generate the model in Keras format
- - Enjoy the model in Keras!
+Please go to Hiroki Taniai's excelent [keras-facenet](https://github.com/nyoki-mtl/keras-facenet) repository as their one works and this currently doesn't
 
-
-This was tested on Linux with tensorflow 1.4 to 1.12, and is probably going to end up obsolete real soon. I have no intention of updating this repository to address
-intricacies of new versions. PRs welcome!
