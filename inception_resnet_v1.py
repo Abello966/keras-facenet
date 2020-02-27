@@ -1,184 +1,230 @@
-import keras as kr
-import keras.backend as K
+# -*- coding: utf-8 -*-
+"""Inception-ResNet V1 model for Keras.
+# Reference
+http://arxiv.org/abs/1602.07261
+https://github.com/davidsandberg/facenet/blob/master/src/models/inception_resnet_v1.py
+https://github.com/myutwo150/keras-inception-resnet-v2/blob/master/inception_resnet_v2.py
+"""
+from functools import partial
 
-from keras import losses
-from keras.models import Sequential, Model, load_model
-from keras.layers import Dense, Dropout, Flatten, Activation
-from keras.layers import Conv2D, Lambda, Conv2DTranspose, Add, Concatenate
-from keras.layers import Input, BatchNormalization, MaxPooling2D, AveragePooling2D
-from keras.optimizers import Adam
-from keras.preprocessing.image import ImageDataGenerator
-from keras.layers.advanced_activations import LeakyReLU
-
-
-# Most of the convolutional layers have this structure
-def irConv2D(inputs, dimension, size, name="", padding="same", stride=1, train_bn=False):
-    conv = Conv2D(dimension, size, name=name, use_bias=False, activation=None, padding=padding, strides=stride)(inputs)
-    batch = BatchNormalization(name=name + "/BatchNorm", scale=False)(conv, training=train_bn)
-    relu = Activation("relu")(batch)
-
-    return relu
-
-    
-#Inception Resnet A
-def block35(inputs, scope="", scale=1.0, activation=True, train_bn=False):
-    #Branch 0
-    tower_conv = irConv2D(inputs, 32, 1, name=scope + "/Branch_0/Conv2d_1x1", train_bn=train_bn)
-    
-    #Branch 1
-    tower_conv1_0 = irConv2D(inputs, 32, 1, name=scope + "/Branch_1/Conv2d_0a_1x1", train_bn=train_bn)
-    tower_conv1_1 = irConv2D(tower_conv1_0, 32, 3, name=scope + "/Branch_1/Conv2d_0b_3x3", train_bn=train_bn)
-
-    #Branch 2
-    tower_conv2_0 = irConv2D(inputs, 32, 1, name=scope + "/Branch_2/Conv2d_0a_1x1", train_bn=train_bn)
-    tower_conv2_1 = irConv2D(tower_conv2_0, 32, 3, name=scope + "/Branch_2/Conv2d_0b_3x3", train_bn=train_bn)
-    tower_conv2_2 = irConv2D(tower_conv2_1, 32, 3, name=scope + "/Branch_2/Conv2d_0c_3x3", train_bn=train_bn)
-
-    mixed = Concatenate()([tower_conv, tower_conv1_1, tower_conv2_2])
-
-    updim = Conv2D(K.int_shape(inputs)[3], 1, name=scope + "/Conv2d_1x1", padding='same')(mixed)
-
-    scaled = Lambda(lambda x: x * scale)(updim)
-
-    out = Add()([inputs, scaled])
-
-    if activation:
-        out = Activation("relu")(out)
-
-    return out
+from keras.models import Model
+from keras.layers import Activation
+from keras.layers import BatchNormalization
+from keras.layers import Concatenate
+from keras.layers import Conv2D
+from keras.layers import Dense
+from keras.layers import Dropout
+from keras.layers import GlobalAveragePooling2D
+from keras.layers import Input
+from keras.layers import Lambda
+from keras.layers import MaxPooling2D
+from keras.layers import add
+from keras import backend as K
 
 
-def block17(inputs, scope="", scale=1.0, activation=True, train_bn=False):
-    #Branch 0
-    tower_conv = irConv2D(inputs, 128, 1, name=scope + "/Branch_0/Conv2d_1x1", train_bn=train_bn)
-    
-    #Branch 1
-    tower_conv1_0 = irConv2D(inputs, 128, 1, name=scope + "/Branch_1/Conv2d_0a_1x1", train_bn=train_bn)
-    tower_conv1_1 = irConv2D(tower_conv1_0, 128, (1, 7), name=scope + "/Branch_1/Conv2d_0b_1x7", train_bn=train_bn)
-    tower_conv1_2 = irConv2D(tower_conv1_1, 128, (7, 1), name=scope + "/Branch_1/Conv2d_0c_7x1", train_bn=train_bn)
-
-    mixed = Concatenate()([tower_conv, tower_conv1_2])
-
-    updim = Conv2D(K.int_shape(inputs)[3], 1, name=scope + "/Conv2d_1x1", padding='same')(mixed)
-
-    scaled = Lambda(lambda x: x * scale)(updim)
-
-    out = Add()([inputs, scaled])
-    
-    if activation:
-        out = Activation("relu")(out)
-
-    return out
+def scaling(x, scale):
+    return x * scale
 
 
-def block8(inputs, scope="", scale=1.0, activation=True, train_bn=False):
-    #Branch 0 
-    tower_conv = irConv2D(inputs, 192, 1, name=scope + "/Branch_0/Conv2d_1x1", train_bn=train_bn)
-    
-    #Branch 1
-    tower_conv1_0 = irConv2D(inputs, 192, 1, name=scope + "/Branch_1/Conv2d_0a_1x1", train_bn=train_bn)
-    tower_conv1_1 = irConv2D(tower_conv1_0, 192, (1, 3), name=scope + "/Branch_1/Conv2d_0b_1x3", train_bn=train_bn)
-    tower_conv1_2 = irConv2D(tower_conv1_1, 192, (3, 1), name=scope + "/Branch_1/Conv2d_0c_3x1", train_bn=train_bn)
+def conv2d_bn(x,
+              filters,
+              kernel_size,
+              strides=1,
+              padding='same',
+              activation='relu',
+              use_bias=False,
+              name=None,
+              training=False):
 
-    mixed = Concatenate()([tower_conv, tower_conv1_2])
-
-    updim = Conv2D(K.int_shape(inputs)[3], 1, name=scope + "/Conv2d_1x1", padding='same')(mixed)
-
-    scaled = Lambda(lambda x: x * scale)(updim)
-
-    out = Add()([inputs, scaled])
-
-    if activation:
-        out = Activation("relu")(out)
-
-    return out
-
-
-def reduction_a(inputs, scope="", train_bn=False):
-    #Branch_0
-    tower_conv = irConv2D(inputs, 384, 3, stride=2, padding="valid", name=scope + "/Branch_0/Conv2d_1a_3x3", train_bn=train_bn)
-
-    #Branch_1
-    tower_conv1_0 = irConv2D(inputs, 192, 1, name=scope + "/Branch_1/Conv2d_0a_1x1", train_bn=train_bn)
-    tower_conv1_1 = irConv2D(tower_conv1_0, 192, 3, name=scope + "/Branch_1/Conv2d_0b_3x3", train_bn=train_bn)
-    tower_conv1_2 = irConv2D(tower_conv1_1, 256, 3, stride=2, padding="valid", name=scope + "/Branch_1/Conv2d_1a_3x3", train_bn=train_bn)
-    
-    #Branch_2
-    pool = MaxPooling2D(3, strides=2, padding="valid", name=scope + "MaxPool_1a_3x3")(inputs)
-
-    outs = Concatenate()([tower_conv, tower_conv1_2, pool])
-    
-    return outs
+    x = Conv2D(filters,
+               kernel_size,
+               strides=strides,
+               padding=padding,
+               use_bias=use_bias,
+               name=name)(x)
+    if not use_bias:
+        bn_axis = 1 if K.image_data_format() == 'channels_first' else 3
+        bn_name = _generate_layer_name('BatchNorm', prefix=name)
+        x = BatchNormalization(axis=bn_axis, momentum=0.995, epsilon=0.001,
+                               scale=False, name=bn_name)(x, training=training)
+    if activation is not None:
+        ac_name = _generate_layer_name('Activation', prefix=name)
+        x = Activation(activation, name=ac_name)(x)
+    return x
 
 
-def reduction_b(inputs, scope="", train_bn=False):
-    #Branch_0    
-    tower_conv = irConv2D(inputs, 256, 1, name=scope + "/Branch_0/Conv2d_0a_1x1", train_bn=train_bn)
-    tower_conv_1 = irConv2D(tower_conv, 384, 3, stride=2, padding="valid", name=scope + "/Branch_0/Conv2d_1a_3x3", train_bn=train_bn)
-
-    #Branch_1
-    tower_conv1 = irConv2D(inputs, 256, 1, name=scope + "/Branch_1/Conv2d_0a_1x1", train_bn=train_bn)
-    tower_conv1_1 = irConv2D(tower_conv1, 256, 3, stride=2, padding="valid", name=scope + "/Branch_1/Conv2d_1a_3x3", train_bn=train_bn)
-
-    #Branch_2
-    tower_conv2 = irConv2D(inputs, 256, 1, name = scope + "/Branch_2/Conv2d_0a_1x1", train_bn=train_bn)
-    tower_conv2_1 = irConv2D(tower_conv2, 256, 3, name=scope + "/Branch_2/Conv2d_0b_3x3", train_bn=train_bn)
-    tower_conv2_2 = irConv2D(tower_conv2_1, 256, 3, stride=2, padding="valid", name=scope + "/Branch_2/Conv2d_1a_3x3", train_bn=train_bn)
-
-    #Branch_3
-    pool = MaxPooling2D(3, strides=2, padding="valid", name=scope + "MaxPool_1a_3x3")(inputs)
-
-    outs = Concatenate()([tower_conv_1, tower_conv1_1, tower_conv2_2, pool])
-    return outs
-
-    
-def inception_resnet_v1(input_shape, scope="InceptionResnetV1", dropout_prob=0.8, bottle_size=512, train_bn=False):
-    incoming = Input(shape=input_shape)
-
-    conv1a = irConv2D(incoming, 32, 3, stride=2, padding="valid", name=scope + "/Conv2d_1a_3x3", train_bn=train_bn)
-    
-    conv2a = irConv2D(conv1a, 32, 3, padding="valid", name=scope + "/Conv2d_2a_3x3", train_bn=train_bn)
-    conv2b = irConv2D(conv2a, 64, 3, name=scope + "/Conv2d_2b_3x3", train_bn=train_bn)
-   
-    pool3a = MaxPooling2D(3, strides=2, padding='valid', name=scope + "/MaxPool_3a_3x3")(conv2b)
-
-    conv3b = irConv2D(pool3a, 80, 1, padding='valid', name=scope + "/Conv2d_3b_1x1", train_bn=train_bn)
-    conv4a = irConv2D(conv3b, 192, 3, padding='valid', name = scope + "/Conv2d_4a_3x3", train_bn=train_bn)
-    conv4b = irConv2D(conv4a, 256, 3, stride=2, padding='valid', name = scope + "/Conv2d_4b_3x3", train_bn=train_bn)
+def _generate_layer_name(name, branch_idx=None, prefix=None):
+    if prefix is None:
+        return None
+    if branch_idx is None:
+        return '_'.join((prefix, name))
+    return '_'.join((prefix, 'Branch', str(branch_idx), name))
 
 
-    #5x Inception-resnet-a
-    block = block35(conv4b, scope=scope +"/Repeat/block35_1", scale=0.17, train_bn=train_bn)
-    for i in range(2, 6):
-        block = block35(block, scope=scope + "/Repeat/block35_" + str(i), scale=0.17, train_bn=train_bn)
-    
-    # Reduction A
-    reduced = reduction_a(block, scope=scope + "/Mixed_6a", train_bn=train_bn)
+def _inception_resnet_block(x, scale, block_type, block_idx, activation='relu', training=False):
+    channel_axis = 1 if K.image_data_format() == 'channels_first' else 3
+    if block_idx is None:
+        prefix = None
+    else:
+        prefix = '_'.join((block_type, str(block_idx)))
+    name_fmt = partial(_generate_layer_name, prefix=prefix)
 
-    #10x Inception-resnet-b
-    block = block17(reduced, scope=scope + "/Repeat_1/block17_1", scale=0.10, train_bn=train_bn)
-    for i in range(2, 11):
-        block = block17(block, scope= scope + "/Repeat_1/block17_" + str(i), scale=0.10, train_bn=train_bn)
+    if block_type == 'Block35':
+        branch_0 = conv2d_bn(x, 32, 1, name=name_fmt('Conv2d_1x1', 0), training=training)
+        branch_1 = conv2d_bn(x, 32, 1, name=name_fmt('Conv2d_0a_1x1', 1), training=training)
+        branch_1 = conv2d_bn(branch_1, 32, 3, name=name_fmt('Conv2d_0b_3x3', 1), training=training)
+        branch_2 = conv2d_bn(x, 32, 1, name=name_fmt('Conv2d_0a_1x1', 2), training=training)
+        branch_2 = conv2d_bn(branch_2, 32, 3, name=name_fmt('Conv2d_0b_3x3', 2), training=training)
+        branch_2 = conv2d_bn(branch_2, 32, 3, name=name_fmt('Conv2d_0c_3x3', 2), training=training)
+        branches = [branch_0, branch_1, branch_2]
+    elif block_type == 'Block17':
+        branch_0 = conv2d_bn(x, 128, 1, name=name_fmt('Conv2d_1x1', 0), training=training)
+        branch_1 = conv2d_bn(x, 128, 1, name=name_fmt('Conv2d_0a_1x1', 1), training=training)
+        branch_1 = conv2d_bn(branch_1, 128, [1, 7], name=name_fmt('Conv2d_0b_1x7', 1), training=training)
+        branch_1 = conv2d_bn(branch_1, 128, [7, 1], name=name_fmt('Conv2d_0c_7x1', 1), training=training)
+        branches = [branch_0, branch_1]
+    elif block_type == 'Block8':
+        branch_0 = conv2d_bn(x, 192, 1, name=name_fmt('Conv2d_1x1', 0), training=training)
+        branch_1 = conv2d_bn(x, 192, 1, name=name_fmt('Conv2d_0a_1x1', 1), training=training)
+        branch_1 = conv2d_bn(branch_1, 192, [1, 3], name=name_fmt('Conv2d_0b_1x3', 1), training=training)
+        branch_1 = conv2d_bn(branch_1, 192, [3, 1], name=name_fmt('Conv2d_0c_3x1', 1), training=training)
+        branches = [branch_0, branch_1]
+    else:
+        raise ValueError('Unknown Inception-ResNet block type. '
+                         'Expects "Block35", "Block17" or "Block8", '
+                         'but got: ' + str(block_type))
 
-    #Reduction B
-    reduced_2 = reduction_b(block, scope=scope + "/Mixed_7a", train_bn=train_bn)
+    mixed = Concatenate(axis=channel_axis, name=name_fmt('Concatenate'))(branches)
+    up = conv2d_bn(mixed,
+                   K.int_shape(x)[channel_axis],
+                   1,
+                   activation=None,
+                   use_bias=True,
+                   name=name_fmt('Conv2d_1x1'),
+                   training=training)
+    up = Lambda(scaling,
+                output_shape=K.int_shape(up)[1:],
+                arguments={'scale': scale})(up)
+    x = add([x, up])
+    if activation is not None:
+        x = Activation(activation, name=name_fmt('Activation'))(x)
+    return x
 
-    #5x Inception-Resnet-C
-    block = block8(reduced_2, scope=scope + "/Repeat_2/block8_1", scale=0.2, train_bn=train_bn)
-    for i in range(2, 6):
-        block = block8(block, scope=scope + "/Repeat_2/block8_" + str(i), scale=0.2, train_bn=train_bn)
 
-    #Final block
-    block = block8(block, scope=scope + "/Block8", activation=False, train_bn=train_bn)    
-        
-    #Logits
-    avg = AveragePooling2D(K.int_shape(block)[1:3], padding="valid")(block)
-    flat = Flatten()(avg)
-    drop = Dropout(dropout_prob)(flat) 
+def InceptionResNetV1(input_shape=(160, 160, 3),
+                      classes=128,
+                      dropout_keep_prob=0.8,
+                      weights_path=None,
+                      training=False):
+    inputs = Input(shape=input_shape)
+    x = conv2d_bn(inputs, 32, 3, strides=2, padding='valid', name='Conv2d_1a_3x3', training=training)
+    x = conv2d_bn(x, 32, 3, padding='valid', name='Conv2d_2a_3x3', training=training)
+    x = conv2d_bn(x, 64, 3, name='Conv2d_2b_3x3', training=training)
+    x = MaxPooling2D(3, strides=2, name='MaxPool_3a_3x3')(x)
+    x = conv2d_bn(x, 80, 1, padding='valid', name='Conv2d_3b_1x1', training=training)
+    x = conv2d_bn(x, 192, 3, padding='valid', name='Conv2d_4a_3x3', training=training)
+    x = conv2d_bn(x, 256, 3, strides=2, padding='valid', name='Conv2d_4b_3x3', training=training)
 
-    # Bottleneck layer
-    btn = Dense(bottle_size, name=scope +"/Bottleneck")(drop)
-    btn_bn = BatchNormalization(name=scope + "/Bottleneck/BatchNorm", scale=False)(btn, training=train_bn)
+    # 5x Block35 (Inception-ResNet-A block):
+    for block_idx in range(1, 6):
+        x = _inception_resnet_block(x,
+                                    scale=0.17,
+                                    block_type='Block35',
+                                    block_idx=block_idx,
+                                    training=training)
 
-    return Model(inputs=incoming, outputs=btn_bn)
+    # Mixed 6a (Reduction-A block):
+    channel_axis = 1 if K.image_data_format() == 'channels_first' else 3
+    name_fmt = partial(_generate_layer_name, prefix='Mixed_6a')
+    branch_0 = conv2d_bn(x,
+                         384,
+                         3,
+                         strides=2,
+                         padding='valid',
+                         name=name_fmt('Conv2d_1a_3x3', 0),
+                         training=training)
+    branch_1 = conv2d_bn(x, 192, 1, name=name_fmt('Conv2d_0a_1x1', 1), training=training)
+    branch_1 = conv2d_bn(branch_1, 192, 3, name=name_fmt('Conv2d_0b_3x3', 1), training=training)
+    branch_1 = conv2d_bn(branch_1,
+                         256,
+                         3,
+                         strides=2,
+                         padding='valid',
+                         name=name_fmt('Conv2d_1a_3x3', 1), training=training)
+    branch_pool = MaxPooling2D(3,
+                               strides=2,
+                               padding='valid',
+                               name=name_fmt('MaxPool_1a_3x3', 2))(x)
+    branches = [branch_0, branch_1, branch_pool]
+    x = Concatenate(axis=channel_axis, name='Mixed_6a')(branches)
 
+    # 10x Block17 (Inception-ResNet-B block):
+    for block_idx in range(1, 11):
+        x = _inception_resnet_block(x,
+                                    scale=0.1,
+                                    block_type='Block17',
+                                    block_idx=block_idx, 
+                                    training=training)
+
+    # Mixed 7a (Reduction-B block): 8 x 8 x 2080
+    name_fmt = partial(_generate_layer_name, prefix='Mixed_7a')
+    branch_0 = conv2d_bn(x, 256, 1, name=name_fmt('Conv2d_0a_1x1', 0), training=training)
+    branch_0 = conv2d_bn(branch_0,
+                         384,
+                         3,
+                         strides=2,
+                         padding='valid',
+                         name=name_fmt('Conv2d_1a_3x3', 0), training=training)
+    branch_1 = conv2d_bn(x, 256, 1, name=name_fmt('Conv2d_0a_1x1', 1), training=training)
+    branch_1 = conv2d_bn(branch_1,
+                         256,
+                         3,
+                         strides=2,
+                         padding='valid',
+                         name=name_fmt('Conv2d_1a_3x3', 1),
+                         training=training)
+    branch_2 = conv2d_bn(x, 256, 1, name=name_fmt('Conv2d_0a_1x1', 2), training=training)
+    branch_2 = conv2d_bn(branch_2, 256, 3, name=name_fmt('Conv2d_0b_3x3', 2), training=training)
+    branch_2 = conv2d_bn(branch_2,
+                         256,
+                         3,
+                         strides=2,
+                         padding='valid',
+                         name=name_fmt('Conv2d_1a_3x3', 2),
+                         training=training)
+    branch_pool = MaxPooling2D(3,
+                               strides=2,
+                               padding='valid',
+                               name=name_fmt('MaxPool_1a_3x3', 3))(x)
+    branches = [branch_0, branch_1, branch_2, branch_pool]
+    x = Concatenate(axis=channel_axis, name='Mixed_7a')(branches)
+
+    # 5x Block8 (Inception-ResNet-C block):
+    for block_idx in range(1, 6):
+        x = _inception_resnet_block(x,
+                                    scale=0.2,
+                                    block_type='Block8',
+                                    block_idx=block_idx,
+                                    training=training)
+    x = _inception_resnet_block(x,
+                                scale=1.,
+                                activation=None,
+                                block_type='Block8',
+                                block_idx=6,
+                                training=training)
+
+    # Classification block
+    x = GlobalAveragePooling2D(name='AvgPool')(x)
+    x = Dropout(1.0 - dropout_keep_prob, name='Dropout')(x)
+    # Bottleneck
+    x = Dense(classes, use_bias=False, name='Bottleneck')(x)
+    bn_name = _generate_layer_name('BatchNorm', prefix='Bottleneck')
+    x = BatchNormalization(momentum=0.995, epsilon=0.001, scale=False,
+                           name=bn_name)(x, training=training)
+
+    # Create model
+    model = Model(inputs, x, name='inception_resnet_v1')
+    if weights_path is not None:
+        model.load_weights(weights_path)
+
+    return model
